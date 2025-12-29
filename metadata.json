@@ -1,0 +1,5 @@
+{
+  "description": "Excel 数据处理工具 v4。支持全量数据识别模式（日期留空则统计全部），基于日期、订单来源进行归属判定，支持动态负责人解析与报表导出。",
+  "requestFramePermissions": [],
+  "name": "ExcelStatsToolV4"
+}
