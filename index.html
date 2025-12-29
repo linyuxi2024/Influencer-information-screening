@@ -6,6 +6,7 @@
     <title>Excel 数据统计工具</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
@@ -20,6 +21,10 @@
         }
         .gradient-bg {
             background: linear-gradient(135deg, #6366f1 0%, #a855f7 100%);
+        }
+        .tab-active {
+            border-bottom: 2px solid #6366f1;
+            color: #6366f1;
         }
     </style>
 <script type="importmap">

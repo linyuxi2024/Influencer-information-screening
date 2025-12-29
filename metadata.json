@@ -1,5 +1,5 @@
 {
-  "description": "Excel 数据处理工具 v4。支持全量数据识别模式（日期留空则统计全部），基于日期、订单来源进行归属判定，支持动态负责人解析与报表导出。",
+  "description": "Excel 数据处理工具 v5。新增负责人维度统计模式，支持邮箱唯一性去重（日期/来源优先），并支持按负责人独立导出 Excel 及 ZIP 压缩包下载。",
   "requestFramePermissions": [],
-  "name": "ExcelStatsToolV4"
+  "name": "ExcelStatsToolV5"
 }
