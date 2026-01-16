@@ -1,5 +1,5 @@
 {
-  "description": "Excel 数据处理工具 v5。新增负责人维度统计模式，支持邮箱唯一性去重（日期/来源优先），并支持按负责人独立导出 Excel 及 ZIP 压缩包下载。",
+  "description": "Excel 数据处理工具 v6。支持兼职名字字段映射，新增“全局最早归属”分析维度（无视日期筛选），支持多维度去重统计与文件批量导出。",
   "requestFramePermissions": [],
-  "name": "ExcelStatsToolV5"
+  "name": "ExcelStatsToolV6"
 }
