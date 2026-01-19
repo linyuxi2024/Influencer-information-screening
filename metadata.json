@@ -1,5 +1,5 @@
 {
-  "description": "Excel 数据处理工具 v6。支持兼职名字字段映射，新增“全局最早归属”分析维度（无视日期筛选），支持多维度去重统计与文件批量导出。",
+  "description": "Excel 数据处理工具 v6.5。支持红人姓名、兼职名字字段映射，新增“全局最早归属”分析维度，支持多维度去重统计与文件批量导出，集成时区偏移校准逻辑。",
   "requestFramePermissions": [],
-  "name": "ExcelStatsToolV6"
+  "name": "ExcelStatsToolV6.5"
 }

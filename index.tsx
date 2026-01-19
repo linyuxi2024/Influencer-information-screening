@@ -3,9 +3,10 @@ import React, { useState, useMemo } from 'react';
 import { createRoot } from 'react-dom/client';
 
 /**
- * Excel Processing Tool v6.4
+ * Excel Processing Tool v6.5
  * 专项优化：
- * 修复时区偏差问题。使用本地时间获取函数替代 toISOString，确保 Excel 日期（如 12-03）在任何时区下均能正确显示，不出现跨天错误。
+ * 1. 新增“红人姓名”字段映射与全链路展示。
+ * 2. 延续 v6.4 的时区修复方案，确保 2025-12-03 等日期在任何时区下均能正确显示。
  */
 
 const PRIORITY_SOURCE = "社媒端";
@@ -26,6 +27,7 @@ interface RecordInfo {
   date: Date;
   source: string;
   partTimeName: string;
+  influencerName: string; // 新增：红人姓名
   earliestOwner?: string; // 最早负责人
   earliestDate?: string;  // 最早日期
 }
@@ -43,6 +45,7 @@ function App() {
   const [dateCol, setDateCol] = useState("");
   const [sourceCol, setSourceCol] = useState("");
   const [partTimeCol, setPartTimeCol] = useState("");
+  const [influencerCol, setInfluencerCol] = useState(""); // 新增：红人姓名列
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
 
@@ -85,8 +88,8 @@ function App() {
           setDateCol(cols.find(c => c.includes('时间') || c.includes('日期') || c.toLowerCase().includes('date')) || "");
           setSourceCol(cols.find(c => c.includes('来源') || c.includes('端口') || c.toLowerCase().includes('source')) || "");
           setPartTimeCol(cols.find(c => c.includes('兼职')) || "");
+          setInfluencerCol(cols.find(c => c.includes('红人') || c.includes('姓名') || c.toLowerCase().includes('influencer')) || "");
         }
-      // Fix: Use 'any' type for catch error to resolve "Argument of type 'unknown' is not assignable to parameter of type 'string'" issues in older/stricter TS environments
       } catch (err: any) {
         const errorMessage = err instanceof Error ? err.message : String(err);
         console.error("File processing error:", errorMessage);
@@ -99,10 +102,10 @@ function App() {
     reader.readAsBinaryString(file);
   };
 
-  // --- 核心工具：计算全局最早归属字典 (Map: Email -> { owner, date }) ---
+  // --- 核心工具：计算全局最早归属字典 (Map: Email -> { owner, date, influencerName }) ---
   const globalEarliestInfoMap = useMemo(() => {
-    if (!data.length || !emailCol || !ownerCol) return new Map<string, { owner: string, date: string }>();
-    const emailToEarliestMap = new Map<string, { owner: string, date: Date, source: string }>();
+    if (!data.length || !emailCol || !ownerCol) return new Map<string, { owner: string, date: string, influencerName: string }>();
+    const emailToEarliestMap = new Map<string, { owner: string, date: Date, source: string, influencerName: string }>();
 
     data.forEach(row => {
       const email = String(row[emailCol] || "").trim();
@@ -114,33 +117,35 @@ function App() {
       const effectiveDate = isInvalidDate ? new Date(8640000000000000) : rowDate!;
       const source = String(row[sourceCol] || "").trim();
       const owner = String(row[ownerCol] || "").trim();
+      const influencerName = String(row[influencerCol] || "").trim();
 
       if (!emailToEarliestMap.has(email)) {
-        emailToEarliestMap.set(email, { owner, date: effectiveDate, source });
+        emailToEarliestMap.set(email, { owner, date: effectiveDate, source, influencerName });
       } else {
         const best = emailToEarliestMap.get(email)!;
         const bestDStr = formatLocalDate(best.date);
         const currDStr = formatLocalDate(effectiveDate);
         
         if (effectiveDate < best.date && currDStr !== bestDStr) {
-          emailToEarliestMap.set(email, { owner, date: effectiveDate, source });
+          emailToEarliestMap.set(email, { owner, date: effectiveDate, source, influencerName });
         } else if (currDStr === bestDStr) {
           if (source.includes(PRIORITY_SOURCE) && !best.source.includes(PRIORITY_SOURCE)) {
-            emailToEarliestMap.set(email, { owner, date: effectiveDate, source });
+            emailToEarliestMap.set(email, { owner, date: effectiveDate, source, influencerName });
           }
         }
       }
     });
 
-    const result = new Map<string, { owner: string, date: string }>();
+    const result = new Map<string, { owner: string, date: string, influencerName: string }>();
     emailToEarliestMap.forEach((val, key) => {
       result.set(key, { 
         owner: val.owner, 
-        date: val.date.getTime() === 8640000000000000 ? "未知日期" : formatLocalDate(val.date)
+        date: val.date.getTime() === 8640000000000000 ? "未知日期" : formatLocalDate(val.date),
+        influencerName: val.influencerName
       });
     });
     return result;
-  }, [data, emailCol, ownerCol, dateCol, sourceCol]);
+  }, [data, emailCol, ownerCol, dateCol, sourceCol, influencerCol]);
 
   // --- 逻辑1: 邮箱维度 (汇总) ---
   const emailCentricData = useMemo(() => {
@@ -164,20 +169,21 @@ function App() {
       const effectiveDate = isInvalidDate ? new Date(8640000000000000) : rowDate!;
       const source = String(row[sourceCol] || "").trim();
       const ptName = String(row[partTimeCol] || "").trim();
+      const infName = String(row[influencerCol] || "").trim();
       const ownersList = String(row[ownerCol] || "").split(/[,，;；\s\/\\]+/).map(o => o.trim()).filter(o => o.length > 0);
       
       if (!emailMap.has(email)) {
-        emailMap.set(email, { date: effectiveDate, source, partTimeName: ptName, owners: new Set(ownersList) });
+        emailMap.set(email, { date: effectiveDate, source, partTimeName: ptName, influencerName: infName, owners: new Set(ownersList) });
       } else {
         const best = emailMap.get(email)!;
         const bestDateStr = formatLocalDate(best.date);
         const rowDateStr = isInvalidDate ? "N/A" : formatLocalDate(rowDate!);
         
         if (effectiveDate < best.date && rowDateStr !== bestDateStr) {
-          emailMap.set(email, { date: effectiveDate, source, partTimeName: ptName, owners: new Set(ownersList) });
+          emailMap.set(email, { date: effectiveDate, source, partTimeName: ptName, influencerName: infName, owners: new Set(ownersList) });
         } else if (rowDateStr === bestDateStr) {
           if (source.includes(PRIORITY_SOURCE) && !best.source.includes(PRIORITY_SOURCE)) {
-            emailMap.set(email, { date: effectiveDate, source, partTimeName: ptName, owners: new Set(ownersList) });
+            emailMap.set(email, { date: effectiveDate, source, partTimeName: ptName, influencerName: infName, owners: new Set(ownersList) });
           } else if (source.includes(PRIORITY_SOURCE) === best.source.includes(PRIORITY_SOURCE)) {
             ownersList.forEach(o => best.owners.add(o));
           }
@@ -189,6 +195,7 @@ function App() {
       return {
         "邮箱": email,
         "负责人": Array.from(info.owners).join("、"),
+        "红人姓名": info.influencerName,
         "最早负责人": earliestInfo?.owner || "未识别",
         "最早日期": earliestInfo?.date || "未识别",
         "日期": info.date.getTime() === 8640000000000000 ? "未知日期" : formatLocalDate(info.date),
@@ -196,7 +203,7 @@ function App() {
         "兼职名字": info.partTimeName
       };
     });
-  }, [data, emailCol, ownerCol, dateCol, sourceCol, partTimeCol, startDate, endDate, globalEarliestInfoMap]);
+  }, [data, emailCol, ownerCol, dateCol, sourceCol, partTimeCol, influencerCol, startDate, endDate, globalEarliestInfoMap]);
 
   // --- 逻辑2: 负责人维度 (分表) ---
   const ownerCentricData = useMemo(() => {
@@ -221,6 +228,7 @@ function App() {
       if (!email) return;
       const source = String(row[sourceCol] || "").trim();
       const ptName = String(row[partTimeCol] || "").trim();
+      const infName = String(row[influencerCol] || "").trim();
       const effectiveDate = isInvalidDate ? new Date(8640000000000000) : rowDate!;
       const ownersList = rawOwners.split(/[,，;；\s\/\\]+/).map(o => o.trim()).filter(o => o.length > 0);
 
@@ -234,6 +242,7 @@ function App() {
           date: effectiveDate, 
           source, 
           partTimeName: ptName,
+          influencerName: infName,
           earliestOwner: earliestInfo?.owner || "未识别",
           earliestDate: earliestInfo?.date || "未识别"
         };
@@ -256,7 +265,7 @@ function App() {
     const result = new Map<string, RecordInfo[]>();
     masterMap.forEach((m, o) => result.set(o, Array.from(m.values())));
     return result;
-  }, [data, emailCol, ownerCol, dateCol, sourceCol, partTimeCol, startDate, endDate, globalEarliestInfoMap]);
+  }, [data, emailCol, ownerCol, dateCol, sourceCol, partTimeCol, influencerCol, startDate, endDate, globalEarliestInfoMap]);
 
   // --- 逻辑3: 全局最早归属 (展示用) ---
   const earliestCentricData = useMemo(() => {
@@ -274,9 +283,10 @@ function App() {
       
       const source = String(row[sourceCol] || "").trim();
       const ptName = String(row[partTimeCol] || "").trim();
+      const infName = String(row[influencerCol] || "").trim();
       const owner = String(row[ownerCol] || "").trim();
       
-      const current: RecordInfo = { email, owner, date: effectiveDate, source, partTimeName: ptName };
+      const current: RecordInfo = { email, owner, date: effectiveDate, source, partTimeName: ptName, influencerName: infName };
 
       if (!globalEmailMap.has(email)) {
         globalEmailMap.set(email, current);
@@ -298,11 +308,12 @@ function App() {
     return Array.from(globalEmailMap.values()).map(r => ({
       "邮箱": r.email,
       "负责人": r.owner,
+      "红人姓名": r.influencerName,
       "日期": r.date.getTime() === 8640000000000000 ? "未知日期" : formatLocalDate(r.date),
       "来源": r.source,
       "兼职名字": r.partTimeName
     }));
-  }, [data, emailCol, ownerCol, dateCol, sourceCol, partTimeCol]);
+  }, [data, emailCol, ownerCol, dateCol, sourceCol, partTimeCol, influencerCol]);
 
   // 导出处理
   const handleExportEmailCentric = () => {
@@ -323,6 +334,7 @@ function App() {
     const out = records.map(r => ({
       "负责人": r.owner,
       "邮箱": r.email,
+      "红人姓名": r.influencerName,
       "最早负责人": r.earliestOwner,
       "最早日期": r.earliestDate,
       "日期": r.date.getTime() === 8640000000000000 ? "未知日期" : formatLocalDate(r.date),
@@ -344,6 +356,7 @@ function App() {
         const out = recs.map(r => ({
           "负责人": r.owner,
           "邮箱": r.email,
+          "红人姓名": r.influencerName,
           "最早负责人": r.earliestOwner,
           "最早日期": r.earliestDate,
           "日期": r.date.getTime() === 8640000000000000 ? "未知日期" : formatLocalDate(r.date),
@@ -356,12 +369,13 @@ function App() {
         const wbout = (window as any).XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
         zip.file(`${owner}_数据统计.xlsx`, wbout);
       });
+      // Explicitly type blob from generateAsync to handle potentially ambiguous Promise result
       const blob = await zip.generateAsync({ type: "blob" });
       const link = document.createElement("a");
-      link.href = URL.createObjectURL(blob as Blob);
+      // Use explicit cast to any or Blob to satisfy strict URL.createObjectURL type requirements if needed
+      link.href = URL.createObjectURL(blob as any);
       link.download = `负责人分表打包_${new Date().getTime()}.zip`;
       link.click();
-    // Fix: Use 'any' type for catch error to resolve "Argument of type 'unknown' is not assignable to parameter of type 'string'" issues in older/stricter TS environments
     } catch (err: any) {
       const errorMessage = err instanceof Error ? err.message : String(err);
       alert(`打包导出失败: ${errorMessage}`);
@@ -376,11 +390,11 @@ function App() {
         <div className="max-w-5xl mx-auto flex items-center justify-between">
           <div>
             <h1 className="text-2xl font-bold flex items-center">
-              <i className="fas fa-file-invoice mr-3"></i> Excel 高级统计工具 v6.4
+              <i className="fas fa-file-invoice mr-3"></i> Excel 高级统计工具 v6.5
             </h1>
             <p className="opacity-80 text-sm mt-1">
               <span className="bg-white/20 px-2 py-0.5 rounded-md mr-2">核心优化</span>
-              已修复日期显示偏差，支持最早负责人/日期索引分析
+              已修复日期显示偏差，支持红人姓名、最早负责人/日期索引分析
             </p>
           </div>
         </div>
@@ -414,11 +428,12 @@ function App() {
                     {[
                       { label: "邮箱字段", state: emailCol, setter: setEmailCol },
                       { label: "负责人字段", state: ownerCol, setter: setOwnerCol },
-                      { label: "日期字段", state: dateCol, setter: setSourceCol }, // Note: possible previous mapping error here but keeping existing structure
+                      { label: "日期字段", state: dateCol, setter: setDateCol },
                       { label: "来源字段", state: sourceCol, setter: setSourceCol },
                       { label: "兼职名字", state: partTimeCol, setter: setPartTimeCol },
+                      { label: "红人姓名", state: influencerCol, setter: setInfluencerCol }, // 新增映射
                     ].map((item, idx) => (
-                      <div key={idx} className={item.label === "兼职名字" ? "col-span-2" : ""}>
+                      <div key={idx} className={(item.label === "兼职名字" || item.label === "红人姓名") ? "col-span-1" : ""}>
                         <label className="text-[10px] font-bold text-gray-400 mb-1 block uppercase">{item.label}</label>
                         <select 
                           value={item.state} 
@@ -500,6 +515,7 @@ function App() {
                         <thead className="bg-gray-50 text-gray-400">
                           <tr>
                             <th className="px-4 py-3 font-bold uppercase">邮箱</th>
+                            <th className="px-4 py-3 font-bold uppercase">红人姓名</th>
                             <th className="px-4 py-3 font-bold uppercase">当前负责人</th>
                             <th className="px-4 py-3 font-bold uppercase text-indigo-600">最早负责人</th>
                             <th className="px-4 py-3 font-bold uppercase text-indigo-600">最早日期</th>
@@ -509,9 +525,10 @@ function App() {
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-gray-50">
-                          {emailCentricData.slice(0, 10).map((r, i) => (
+                          {emailCentricData.slice(0, 10).map((r: any, i) => (
                             <tr key={i} className="hover:bg-indigo-50/20">
                               <td className="px-4 py-3 font-medium text-gray-700">{r["邮箱"]}</td>
+                              <td className="px-4 py-3 font-bold text-emerald-600">{r["红人姓名"] || "-"}</td>
                               <td className="px-4 py-3"><span className="bg-indigo-50 text-indigo-600 px-1.5 py-0.5 rounded font-bold text-[10px]">{r["负责人"]}</span></td>
                               <td className="px-4 py-3 font-black text-gray-800">{r["最早负责人"]}</td>
                               <td className="px-4 py-3 font-black text-gray-800">{r["最早日期"]}</td>
@@ -549,6 +566,7 @@ function App() {
                             <div className="mb-3">
                                 <p className="text-[9px] text-gray-400 mb-1 uppercase">导出内容预览</p>
                                 <div className="text-[10px] text-gray-500 space-y-0.5">
+                                    <p>• 包含“红人姓名”字段</p>
                                     <p>• 包含“最早负责人”字段</p>
                                     <p>• 包含“最早日期”字段</p>
                                     <p>• 包含“兼职名字”字段</p>
@@ -577,18 +595,19 @@ function App() {
                         <thead className="bg-purple-50 text-purple-400">
                           <tr>
                             <th className="px-4 py-3 font-bold uppercase">邮箱</th>
+                            <th className="px-4 py-3 font-bold uppercase">红人姓名</th>
                             <th className="px-4 py-3 font-bold uppercase">最早负责人</th>
-                            <th className="px-4 py-3 font-bold uppercase">兼职名字</th>
-                            <th className="px-4 py-3 font-bold uppercase">最早日期</th>
+                            <th className="px-4 py-3 font-bold uppercase text-indigo-600">最早日期</th>
                             <th className="px-4 py-3 font-bold uppercase">来源</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-gray-50">
-                          {earliestCentricData.slice(0, 10).map((r, i) => (
+                          {/* Add explicit any type to 'r' to avoid unknown type errors on line 573 */}
+                          {earliestCentricData.slice(0, 10).map((r: any, i) => (
                             <tr key={i} className="hover:bg-purple-50/20">
                               <td className="px-4 py-3 font-medium text-gray-700">{r["邮箱"]}</td>
+                              <td className="px-4 py-3 font-bold text-emerald-600">{r["红人姓名"] || "-"}</td>
                               <td className="px-4 py-3 font-bold text-purple-700">{r["负责人"]}</td>
-                              <td className="px-4 py-3 text-gray-500">{r["兼职名字"] || "-"}</td>
                               <td className="px-4 py-3 text-gray-400 font-mono">{r["日期"]}</td>
                               <td className="px-4 py-3 text-gray-400 italic">{r["来源"]}</td>
                             </tr>
