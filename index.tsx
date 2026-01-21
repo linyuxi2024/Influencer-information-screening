@@ -1,13 +1,13 @@
-
 import React, { useState, useMemo } from 'react';
 import { createRoot } from 'react-dom/client';
 
 /**
- * Excel Processing Tool v6.6
+ * Excel Processing Tool v6.9
  * 专项优化：
- * 1. 强化“红人姓名”字段：改进自动识别算法，确保映射更智能。
- * 2. 全链路集成：所有输出表（汇总、分包、全库）均增加并展示“红人姓名”。
- * 3. 核心修正：延续 v6.4 时区校准方案，解决 12-03 变 12-02 的日期偏差问题。
+ * 1. 导出精简：移除负责人分表导出中的“最早红人”字段。
+ * 2. 逻辑维持：全局最早归属计算中，同一日期（天）内“社媒端”具有最高优先级。
+ * 3. 显示优化：若“最早兼职名字”识别结果为空，则直接显示为空。
+ * 4. 核心修正：延续 v6.4 时区校准方案，解决日期显示偏差。
  */
 
 const PRIORITY_SOURCE = "社媒端";
@@ -32,6 +32,8 @@ interface RecordInfo {
   earliestOwner?: string; // 最早负责人
   earliestDate?: string;  // 最早日期
   earliestInfluencer?: string; // 最早记录红人
+  earliestPartTimeName?: string; // 最早兼职名字
+  earliestSource?: string; // 最早来源
 }
 
 function App() {
@@ -85,22 +87,20 @@ function App() {
         setData(jsonData as any[]);
 
         if (cols.length > 0) {
-          setEmailCol(cols.find(c => c === '邮箱' || c.toLowerCase() === 'email' || c.includes('邮箱') || c.toLowerCase().includes('email')) || "");
-          setOwnerCol(cols.find(c => c === '负责人' || c.toLowerCase() === 'owner' || c.includes('负责人') || c.toLowerCase().includes('owner')) || "");
-          setDateCol(cols.find(c => c.includes('时间') || c.includes('日期') || c.toLowerCase().includes('date')) || "");
-          setSourceCol(cols.find(c => c.includes('来源') || c.includes('端口') || c.toLowerCase().includes('source')) || "");
-          setPartTimeCol(cols.find(c => c === '兼职' || c.includes('兼职')) || "");
+          setEmailCol(cols.find((c: any) => c === '邮箱' || c.toLowerCase() === 'email' || c.includes('邮箱') || c.toLowerCase().includes('email')) || "");
+          setOwnerCol(cols.find((c: any) => c === '负责人' || c.toLowerCase() === 'owner' || c.includes('负责人') || c.toLowerCase().includes('owner')) || "");
+          setDateCol(cols.find((c: any) => c.includes('时间') || c.includes('日期') || c.toLowerCase().includes('date')) || "");
+          setSourceCol(cols.find((c: any) => c.includes('来源') || c.includes('端口') || c.toLowerCase().includes('source')) || "");
+          setPartTimeCol(cols.find((c: any) => c === '兼职' || c.includes('兼职')) || "");
           
-          // 增强“红人姓名”字段映射的相似度识别：优先匹配精确词汇
           const bestInfluencerMatch = 
-            cols.find(c => c === '红人姓名' || c === '红人') || 
-            cols.find(c => c.toLowerCase() === 'influencer' || c.toLowerCase() === 'influencer name') ||
-            cols.find(c => c.includes('红人') || c.includes('博主') || c.toLowerCase().includes('influencer')) ||
-            cols.find(c => c.includes('姓名') && !c.includes('负责人') && !c.includes('兼职')) || 
+            cols.find((c: any) => c === '红人姓名' || c === '红人') || 
+            cols.find((c: any) => c.toLowerCase() === 'influencer' || c.toLowerCase() === 'influencer name') ||
+            cols.find((c: any) => c.includes('红人') || c.includes('博主') || c.toLowerCase().includes('influencer')) ||
+            cols.find((c: any) => String(c).includes('姓名') && !String(c).includes('负责人') && !String(c).includes('兼职')) || 
             "";
           setInfluencerCol(bestInfluencerMatch);
         }
-      // 使用 unknown 处理错误并确保转换为 string
       } catch (err) {
         const errorMessage = err instanceof Error ? err.message : String(err);
         console.error("File processing error:", errorMessage);
@@ -113,10 +113,10 @@ function App() {
     reader.readAsBinaryString(file);
   };
 
-  // --- 核心工具：计算全局最早归属字典 (Map: Email -> { owner, date, influencerName }) ---
+  // --- 核心工具：计算全局最早归属字典 ---
   const globalEarliestInfoMap = useMemo(() => {
-    if (!data.length || !emailCol || !ownerCol) return new Map<string, { owner: string, date: string, influencerName: string }>();
-    const emailToEarliestMap = new Map<string, { owner: string, date: Date, source: string, influencerName: string }>();
+    if (!data.length || !emailCol || !ownerCol) return new Map<string, { owner: string, date: string, influencerName: string, partTimeName: string, source: string }>();
+    const emailToEarliestMap = new Map<string, { owner: string, date: Date, source: string, influencerName: string, partTimeName: string }>();
 
     data.forEach(row => {
       const email = String(row[emailCol] || "").trim();
@@ -129,34 +129,44 @@ function App() {
       const source = String(row[sourceCol] || "").trim();
       const owner = String(row[ownerCol] || "").trim();
       const influencerName = String(row[influencerCol] || "").trim();
+      const partTimeName = String(row[partTimeCol] || "").trim();
 
       if (!emailToEarliestMap.has(email)) {
-        emailToEarliestMap.set(email, { owner, date: effectiveDate, source, influencerName });
+        emailToEarliestMap.set(email, { owner, date: effectiveDate, source, influencerName, partTimeName });
       } else {
         const best = emailToEarliestMap.get(email)!;
         const bestDStr = formatLocalDate(best.date);
         const currDStr = formatLocalDate(effectiveDate);
         
         if (effectiveDate < best.date && currDStr !== bestDStr) {
-          emailToEarliestMap.set(email, { owner, date: effectiveDate, source, influencerName });
+          emailToEarliestMap.set(email, { owner, date: effectiveDate, source, influencerName, partTimeName });
         } else if (currDStr === bestDStr) {
-          if (source.includes(PRIORITY_SOURCE) && !best.source.includes(PRIORITY_SOURCE)) {
-            emailToEarliestMap.set(email, { owner, date: effectiveDate, source, influencerName });
+          const currIsPriority = source.includes(PRIORITY_SOURCE);
+          const bestIsPriority = best.source.includes(PRIORITY_SOURCE);
+          
+          if (currIsPriority && !bestIsPriority) {
+            emailToEarliestMap.set(email, { owner, date: effectiveDate, source, influencerName, partTimeName });
+          } else if (currIsPriority === bestIsPriority) {
+            if (effectiveDate < best.date) {
+              emailToEarliestMap.set(email, { owner, date: effectiveDate, source, influencerName, partTimeName });
+            }
           }
         }
       }
     });
 
-    const result = new Map<string, { owner: string, date: string, influencerName: string }>();
+    const result = new Map<string, { owner: string, date: string, influencerName: string, partTimeName: string, source: string }>();
     emailToEarliestMap.forEach((val, key) => {
       result.set(key, { 
         owner: val.owner, 
         date: val.date.getTime() === 8640000000000000 ? "未知日期" : formatLocalDate(val.date),
-        influencerName: val.influencerName
+        influencerName: val.influencerName,
+        partTimeName: val.partTimeName,
+        source: val.source
       });
     });
     return result;
-  }, [data, emailCol, ownerCol, dateCol, sourceCol, influencerCol]);
+  }, [data, emailCol, ownerCol, dateCol, sourceCol, influencerCol, partTimeCol]);
 
   // --- 逻辑1: 邮箱维度 (汇总) ---
   const emailCentricData = useMemo(() => {
@@ -208,6 +218,8 @@ function App() {
         "红人姓名": info.influencerName,
         "负责人": Array.from(info.owners).join("、"),
         "最早负责人": earliestInfo?.owner || "未识别",
+        "最早兼职名字": earliestInfo?.partTimeName || "",
+        "最早来源": earliestInfo?.source || "未识别",
         "最早日期": earliestInfo?.date || "未识别",
         "日期": info.date.getTime() === 8640000000000000 ? "未知日期" : formatLocalDate(info.date),
         "订单来源": info.source,
@@ -256,7 +268,9 @@ function App() {
           influencerName: infName,
           earliestOwner: earliestInfo?.owner || "未识别",
           earliestDate: earliestInfo?.date || "未识别",
-          earliestInfluencer: earliestInfo?.influencerName || "未识别"
+          earliestInfluencer: earliestInfo?.influencerName || "未识别",
+          earliestPartTimeName: earliestInfo?.partTimeName || "",
+          earliestSource: earliestInfo?.source || "未识别"
         };
         if (!ownerEmails.has(email)) {
           ownerEmails.set(email, current);
@@ -279,7 +293,7 @@ function App() {
     return result;
   }, [data, emailCol, ownerCol, dateCol, sourceCol, partTimeCol, influencerCol, startDate, endDate, globalEarliestInfoMap]);
 
-  // --- 逻辑3: 全局最早归属 (展示用) ---
+  // --- 逻辑3: 全局最早归属 ---
   const earliestCentricData = useMemo(() => {
     if (!data.length || !emailCol || !ownerCol) return [];
     const globalEmailMap = new Map<string, RecordInfo>();
@@ -327,7 +341,6 @@ function App() {
     }));
   }, [data, emailCol, ownerCol, dateCol, sourceCol, partTimeCol, influencerCol]);
 
-  // 导出处理
   const handleExportEmailCentric = () => {
     const ws = (window as any).XLSX.utils.json_to_sheet(emailCentricData);
     const wb = (window as any).XLSX.utils.book_new();
@@ -343,12 +356,14 @@ function App() {
   };
 
   const exportSingleOwner = (owner: string, records: RecordInfo[]) => {
+    // 精简导出：移除“最早红人”字段
     const out = records.map(r => ({
       "负责人": r.owner,
       "邮箱": r.email,
       "红人姓名": r.influencerName,
       "最早负责人": r.earliestOwner,
-      "最早红人": r.earliestInfluencer,
+      "最早兼职名字": r.earliestPartTimeName,
+      "最早来源": r.earliestSource,
       "最早日期": r.earliestDate,
       "日期": r.date.getTime() === 8640000000000000 ? "未知日期" : formatLocalDate(r.date),
       "订单来源": r.source,
@@ -366,12 +381,14 @@ function App() {
     try {
       const zip = new (window as any).JSZip();
       ownerCentricData.forEach((recs, owner) => {
+        // 精简导出：移除“最早红人”字段
         const out = recs.map(r => ({
           "负责人": r.owner,
           "邮箱": r.email,
           "红人姓名": r.influencerName,
           "最早负责人": r.earliestOwner,
-          "最早红人": r.earliestInfluencer,
+          "最早兼职名字": r.earliestPartTimeName,
+          "最早来源": r.earliestSource,
           "最早日期": r.earliestDate,
           "日期": r.date.getTime() === 8640000000000000 ? "未知日期" : formatLocalDate(r.date),
           "订单来源": r.source,
@@ -388,7 +405,6 @@ function App() {
       link.href = URL.createObjectURL(blob as any);
       link.download = `负责人分表打包_${new Date().getTime()}.zip`;
       link.click();
-    // 使用 unknown 处理错误并确保转换为 string
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : String(err);
       alert(`打包导出失败: ${errorMessage}`);
@@ -403,18 +419,17 @@ function App() {
         <div className="max-w-5xl mx-auto flex items-center justify-between">
           <div>
             <h1 className="text-2xl font-bold flex items-center">
-              <i className="fas fa-file-invoice mr-3"></i> Excel 高级统计工具 v6.6
+              <i className="fas fa-file-invoice mr-3"></i> Excel 高级统计工具 v6.9
             </h1>
             <p className="opacity-80 text-sm mt-1">
-              <span className="bg-white/20 px-2 py-0.5 rounded-md mr-2">核心支持</span>
-              红人姓名识别、全局最早归属透视、时区偏差校准
+              <span className="bg-white/20 px-2 py-0.5 rounded-md mr-2">全链路溯源优化</span>
+              支持社媒端优先逻辑、空字段显示优化、负责人分表精简导出
             </p>
           </div>
         </div>
       </header>
 
       <main className="max-w-5xl mx-auto px-6 space-y-6">
-        {/* Step 1: Upload */}
         <section className="glass-card p-6 rounded-2xl shadow-sm">
           <h2 className="text-lg font-bold text-gray-800 mb-4 flex items-center">
             <span className="bg-indigo-600 text-white w-6 h-6 rounded-full flex items-center justify-center mr-2 text-[10px]">1</span>
@@ -429,7 +444,6 @@ function App() {
 
         {data.length > 0 && (
           <>
-            {/* Step 2: Mapping */}
             <section className="glass-card p-6 rounded-2xl shadow-sm">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
                 <div>
@@ -482,16 +496,15 @@ function App() {
                     </div>
                     <div className="p-3 bg-indigo-50 rounded-lg border border-indigo-100 text-[10px] text-indigo-700 leading-relaxed">
                       <p className="font-bold mb-1 italic">处理逻辑说明：</p>
-                      • 重复邮箱：取统计期内<strong>日期最早</strong>的记录。<br/>
+                      • 去重规则：取统计期内<strong>日期最早</strong>的记录。<br/>
                       • 优先级：同日期时<strong>“{PRIORITY_SOURCE}”</strong>优先。<br/>
-                      • 自动输出：支持红人姓名、最早负责人及最早日期的全链路透视。
+                      • 溯源信息：自动追溯全库中该邮箱的<strong>最早记录</strong>。
                     </div>
                   </div>
                 </div>
               </div>
             </section>
 
-            {/* Step 3: Analysis Tabs */}
             <section className="glass-card overflow-hidden rounded-2xl shadow-sm border-0">
               <div className="flex border-b border-gray-100 bg-gray-50/30">
                 <button 
@@ -518,7 +531,7 @@ function App() {
                 {activeTab === 'email' && (
                   <div className="space-y-6">
                     <div className="flex justify-between items-center">
-                      <h3 className="text-gray-800 font-bold text-sm">去重后目标数据 ({emailCentricData.length} 条)</h3>
+                      <h3 className="text-gray-800 font-bold text-sm">去重后汇总结果 ({emailCentricData.length} 条)</h3>
                       <button onClick={handleExportEmailCentric} className="bg-indigo-600 hover:bg-indigo-700 text-white px-5 py-2 rounded-xl text-xs font-bold shadow-md transition-all">
                         <i className="fas fa-file-export mr-2"></i> 导出汇总表
                       </button>
@@ -531,8 +544,9 @@ function App() {
                             <th className="px-4 py-3 font-bold uppercase text-emerald-600">红人姓名</th>
                             <th className="px-4 py-3 font-bold uppercase">当前负责人</th>
                             <th className="px-4 py-3 font-bold uppercase text-indigo-600">最早负责人</th>
-                            <th className="px-4 py-3 font-bold uppercase">日期</th>
-                            <th className="px-4 py-3 font-bold uppercase">来源</th>
+                            <th className="px-4 py-3 font-bold uppercase text-indigo-600">最早兼职名字</th>
+                            <th className="px-4 py-3 font-bold uppercase text-indigo-600">最早来源</th>
+                            <th className="px-4 py-3 font-bold uppercase">最早日期</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-gray-50">
@@ -541,9 +555,10 @@ function App() {
                               <td className="px-4 py-3 font-medium text-gray-700">{r["邮箱"]}</td>
                               <td className="px-4 py-3 font-bold text-emerald-600">{r["红人姓名"] || "-"}</td>
                               <td className="px-4 py-3"><span className="bg-indigo-50 text-indigo-600 px-1.5 py-0.5 rounded font-bold text-[10px]">{r["负责人"]}</span></td>
-                              <td className="px-4 py-3 text-slate-600">{r["最早负责人"]}</td>
-                              <td className="px-4 py-3 text-gray-400 font-mono">{r["日期"]}</td>
-                              <td className="px-4 py-3 text-gray-400 italic">{r["订单来源"]}</td>
+                              <td className="px-4 py-3 text-slate-600 font-bold">{r["最早负责人"]}</td>
+                              <td className="px-4 py-3 text-slate-500">{r["最早兼职名字"]}</td>
+                              <td className="px-4 py-3 text-slate-400 italic">{r["最早来源"]}</td>
+                              <td className="px-4 py-3 text-gray-400 font-mono">{r["最早日期"]}</td>
                             </tr>
                           ))}
                         </tbody>
@@ -555,7 +570,7 @@ function App() {
                 {activeTab === 'owner' && (
                   <div className="space-y-6">
                     <div className="flex justify-between items-center">
-                      <h3 className="text-gray-800 font-bold text-sm">按负责人分组 ({ownerCentricData.size} 组)</h3>
+                      <h3 className="text-gray-800 font-bold text-sm">分包统计 ({ownerCentricData.size} 负责人)</h3>
                       <button onClick={handleExportAllZip} className="bg-emerald-600 hover:bg-emerald-700 text-white px-5 py-2 rounded-xl text-xs font-bold shadow-md transition-all">
                         <i className="fas fa-file-archive mr-2"></i> 打包导出 (ZIP)
                       </button>
@@ -572,9 +587,9 @@ function App() {
                               </div>
                               <span className="bg-indigo-50 text-indigo-600 px-2 py-0.5 rounded-full text-[10px] font-bold">{recs.length} 记录</span>
                             </div>
-                            <div className="mb-3 text-[10px] text-gray-500 space-y-1">
-                                <p>• 包含红人姓名与最早记录</p>
-                                <p>• 自动按负责人去重并匹配日期</p>
+                            <div className="mb-3 text-[10px] text-gray-500 space-y-1 italic">
+                                <p>• 包含红人姓名 & 全链路溯源</p>
+                                <p>• 已移除分表中的最早红人字段</p>
                             </div>
                             <button onClick={() => exportSingleOwner(owner, recs)} className="w-full bg-gray-50 group-hover:bg-indigo-600 group-hover:text-white text-gray-500 py-2 rounded-xl text-[11px] font-bold transition-all">
                               单独导出 Excel
@@ -589,9 +604,9 @@ function App() {
                 {activeTab === 'earliest' && (
                   <div className="space-y-6">
                     <div className="flex justify-between items-center">
-                      <h3 className="text-gray-800 font-bold text-sm">全量库最早归属名单 (索引表)</h3>
+                      <h3 className="text-gray-800 font-bold text-sm">全库检索库 (原始归属快照)</h3>
                       <button onClick={handleExportEarliest} className="bg-purple-600 hover:bg-purple-700 text-white px-5 py-2 rounded-xl text-xs font-bold shadow-md transition-all">
-                        <i className="fas fa-history mr-2"></i> 导出全库最早表
+                        <i className="fas fa-history mr-2"></i> 导出全库表
                       </button>
                     </div>
                     <div className="overflow-x-auto border border-gray-100 rounded-xl">
@@ -601,8 +616,8 @@ function App() {
                             <th className="px-4 py-3 font-bold uppercase">邮箱</th>
                             <th className="px-4 py-3 font-bold uppercase text-emerald-600">红人姓名</th>
                             <th className="px-4 py-3 font-bold uppercase">最早负责人</th>
+                            <th className="px-4 py-3 font-bold uppercase">最早来源</th>
                             <th className="px-4 py-3 font-bold uppercase text-indigo-600">最早日期</th>
-                            <th className="px-4 py-3 font-bold uppercase">来源</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-gray-50">
@@ -611,8 +626,8 @@ function App() {
                               <td className="px-4 py-3 font-medium text-gray-700">{r["邮箱"]}</td>
                               <td className="px-4 py-3 font-bold text-emerald-600">{r["红人姓名"] || "-"}</td>
                               <td className="px-4 py-3 font-bold text-purple-700">{r["负责人"]}</td>
+                              <td className="px-4 py-3 text-gray-500">{r["来源"]}</td>
                               <td className="px-4 py-3 text-gray-400 font-mono">{r["日期"]}</td>
-                              <td className="px-4 py-3 text-gray-400 italic">{r["来源"]}</td>
                             </tr>
                           ))}
                         </tbody>
@@ -630,8 +645,8 @@ function App() {
         <div className="fixed inset-0 bg-indigo-950/40 backdrop-blur-md flex items-center justify-center z-50">
           <div className="bg-white p-10 rounded-3xl shadow-2xl text-center">
             <div className="animate-spin rounded-full h-12 w-12 border-4 border-indigo-600 border-t-transparent mx-auto mb-4"></div>
-            <p className="font-bold text-gray-800">正在生成目标表并进行透视分析...</p>
-            <p className="text-xs text-gray-400 mt-2">包含日期校准与红人姓名深度匹配</p>
+            <p className="font-bold text-gray-800">正在生成溯源报表与分析全链路数据...</p>
+            <p className="text-xs text-gray-400 mt-2">正在提取：最早负责人、最早来源、最早兼职名字</p>
           </div>
         </div>
       )}
