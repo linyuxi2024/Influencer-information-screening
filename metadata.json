@@ -1,5 +1,5 @@
 {
-  "description": "Excel 数据处理工具 v6.9。支持红人姓名、全链路溯源字段映射，移除负责人分表导出中的最早红人字段，维持社媒端优先逻辑与高精度日期校准。",
+  "description": "Excel 数据处理工具 v7.0。实现邮箱全大小写不敏感去重判别，支持社媒端优先逻辑，优化负责人分表精简导出（移除最早红人字段）。",
   "requestFramePermissions": [],
-  "name": "ExcelStatsToolV6.9"
+  "name": "ExcelStatsToolV7.0"
 }

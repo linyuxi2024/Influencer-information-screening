@@ -2,12 +2,12 @@ import React, { useState, useMemo } from 'react';
 import { createRoot } from 'react-dom/client';
 
 /**
- * Excel Processing Tool v6.9
+ * Excel Processing Tool v7.0
  * 专项优化：
- * 1. 导出精简：移除负责人分表导出中的“最早红人”字段。
- * 2. 逻辑维持：全局最早归属计算中，同一日期（天）内“社媒端”具有最高优先级。
- * 3. 显示优化：若“最早兼职名字”识别结果为空，则直接显示为空。
- * 4. 核心修正：延续 v6.4 时区校准方案，解决日期显示偏差。
+ * 1. 邮箱识别：邮箱判重不区分大小写（Case-Insensitive）。
+ * 2. 导出精简：移除负责人分表导出中的“最早红人”字段。
+ * 3. 归属优先级：同一日期（天）内“社媒端”具有最高优先级。
+ * 4. 显示优化：若“最早兼职名字”识别为空，则直接显示为空。
  */
 
 const PRIORITY_SOURCE = "社媒端";
@@ -49,7 +49,7 @@ function App() {
   const [dateCol, setDateCol] = useState("");
   const [sourceCol, setSourceCol] = useState("");
   const [partTimeCol, setPartTimeCol] = useState("");
-  const [influencerCol, setInfluencerCol] = useState(""); // 红人姓名列
+  const [influencerCol, setInfluencerCol] = useState(""); 
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
 
@@ -101,7 +101,8 @@ function App() {
             "";
           setInfluencerCol(bestInfluencerMatch);
         }
-      } catch (err) {
+      // Fix: Explicitly use 'any' for catch block to avoid 'unknown' type assignment issues in TS
+      } catch (err: any) {
         const errorMessage = err instanceof Error ? err.message : String(err);
         console.error("File processing error:", errorMessage);
         alert(`文件读取失败: ${errorMessage}`);
@@ -114,6 +115,7 @@ function App() {
   };
 
   // --- 核心工具：计算全局最早归属字典 ---
+  // 使用 Map 时，Key 为小写邮箱，确保不区分大小写
   const globalEarliestInfoMap = useMemo(() => {
     if (!data.length || !emailCol || !ownerCol) return new Map<string, { owner: string, date: string, influencerName: string, partTimeName: string, source: string }>();
     const emailToEarliestMap = new Map<string, { owner: string, date: Date, source: string, influencerName: string, partTimeName: string }>();
@@ -121,6 +123,7 @@ function App() {
     data.forEach(row => {
       const email = String(row[emailCol] || "").trim();
       if (!email) return;
+      const emailKey = email.toLowerCase(); // 统一转小写进行比较
 
       const rawDate = row[dateCol];
       let rowDate = (rawDate instanceof Date) ? rawDate : (rawDate ? new Date(rawDate) : null);
@@ -131,24 +134,24 @@ function App() {
       const influencerName = String(row[influencerCol] || "").trim();
       const partTimeName = String(row[partTimeCol] || "").trim();
 
-      if (!emailToEarliestMap.has(email)) {
-        emailToEarliestMap.set(email, { owner, date: effectiveDate, source, influencerName, partTimeName });
+      if (!emailToEarliestMap.has(emailKey)) {
+        emailToEarliestMap.set(emailKey, { owner, date: effectiveDate, source, influencerName, partTimeName });
       } else {
-        const best = emailToEarliestMap.get(email)!;
+        const best = emailToEarliestMap.get(emailKey)!;
         const bestDStr = formatLocalDate(best.date);
         const currDStr = formatLocalDate(effectiveDate);
         
         if (effectiveDate < best.date && currDStr !== bestDStr) {
-          emailToEarliestMap.set(email, { owner, date: effectiveDate, source, influencerName, partTimeName });
+          emailToEarliestMap.set(emailKey, { owner, date: effectiveDate, source, influencerName, partTimeName });
         } else if (currDStr === bestDStr) {
           const currIsPriority = source.includes(PRIORITY_SOURCE);
           const bestIsPriority = best.source.includes(PRIORITY_SOURCE);
           
           if (currIsPriority && !bestIsPriority) {
-            emailToEarliestMap.set(email, { owner, date: effectiveDate, source, influencerName, partTimeName });
+            emailToEarliestMap.set(emailKey, { owner, date: effectiveDate, source, influencerName, partTimeName });
           } else if (currIsPriority === bestIsPriority) {
             if (effectiveDate < best.date) {
-              emailToEarliestMap.set(email, { owner, date: effectiveDate, source, influencerName, partTimeName });
+              emailToEarliestMap.set(emailKey, { owner, date: effectiveDate, source, influencerName, partTimeName });
             }
           }
         }
@@ -175,6 +178,8 @@ function App() {
     data.forEach(row => {
       const email = String(row[emailCol] || "").trim();
       if (!email) return;
+      const emailKey = email.toLowerCase();
+      
       const rawDate = row[dateCol];
       let rowDate = (rawDate instanceof Date) ? rawDate : (rawDate ? new Date(rawDate) : null);
       const isInvalidDate = !rowDate || isNaN(rowDate.getTime());
@@ -193,28 +198,29 @@ function App() {
       const infName = String(row[influencerCol] || "").trim();
       const ownersList = String(row[ownerCol] || "").split(/[,，;；\s\/\\]+/).map(o => o.trim()).filter(o => o.length > 0);
       
-      if (!emailMap.has(email)) {
-        emailMap.set(email, { date: effectiveDate, source, partTimeName: ptName, influencerName: infName, owners: new Set(ownersList) });
+      if (!emailMap.has(emailKey)) {
+        // 保存原始 email 用于显示
+        emailMap.set(emailKey, { displayEmail: email, date: effectiveDate, source, partTimeName: ptName, influencerName: infName, owners: new Set(ownersList) });
       } else {
-        const best = emailMap.get(email)!;
+        const best = emailMap.get(emailKey)!;
         const bestDateStr = formatLocalDate(best.date);
         const rowDateStr = isInvalidDate ? "N/A" : formatLocalDate(rowDate!);
         
         if (effectiveDate < best.date && rowDateStr !== bestDateStr) {
-          emailMap.set(email, { date: effectiveDate, source, partTimeName: ptName, influencerName: infName, owners: new Set(ownersList) });
+          emailMap.set(emailKey, { displayEmail: email, date: effectiveDate, source, partTimeName: ptName, influencerName: infName, owners: new Set(ownersList) });
         } else if (rowDateStr === bestDateStr) {
           if (source.includes(PRIORITY_SOURCE) && !best.source.includes(PRIORITY_SOURCE)) {
-            emailMap.set(email, { date: effectiveDate, source, partTimeName: ptName, influencerName: infName, owners: new Set(ownersList) });
+            emailMap.set(emailKey, { displayEmail: email, date: effectiveDate, source, partTimeName: ptName, influencerName: infName, owners: new Set(ownersList) });
           } else if (source.includes(PRIORITY_SOURCE) === best.source.includes(PRIORITY_SOURCE)) {
             ownersList.forEach(o => best.owners.add(o));
           }
         }
       }
     });
-    return Array.from(emailMap.entries()).map(([email, info]) => {
-      const earliestInfo = globalEarliestInfoMap.get(email);
+    return Array.from(emailMap.entries()).map(([emailKey, info]) => {
+      const earliestInfo = globalEarliestInfoMap.get(emailKey);
       return {
-        "邮箱": email,
+        "邮箱": info.displayEmail,
         "红人姓名": info.influencerName,
         "负责人": Array.from(info.owners).join("、"),
         "最早负责人": earliestInfo?.owner || "未识别",
@@ -235,6 +241,11 @@ function App() {
     data.forEach(row => {
       const rawOwners = String(row[ownerCol] || "").trim();
       if (!rawOwners) return;
+      
+      const email = String(row[emailCol] || "").trim();
+      if (!email) return;
+      const emailKey = email.toLowerCase();
+
       const rawDate = row[dateCol];
       let rowDate = (rawDate instanceof Date) ? rawDate : (rawDate ? new Date(rawDate) : null);
       const isInvalidDate = !rowDate || isNaN(rowDate.getTime());
@@ -247,8 +258,6 @@ function App() {
         if (e) { const adjE = new Date(e); adjE.setHours(23, 59, 59, 999); if (rowDate! > adjE) return; }
       }
 
-      const email = String(row[emailCol] || "").trim();
-      if (!email) return;
       const source = String(row[sourceCol] || "").trim();
       const ptName = String(row[partTimeCol] || "").trim();
       const infName = String(row[influencerCol] || "").trim();
@@ -258,7 +267,7 @@ function App() {
       ownersList.forEach(owner => {
         if (!masterMap.has(owner)) masterMap.set(owner, new Map());
         const ownerEmails = masterMap.get(owner)!;
-        const earliestInfo = globalEarliestInfoMap.get(email);
+        const earliestInfo = globalEarliestInfoMap.get(emailKey);
         const current: RecordInfo = { 
           email, 
           owner, 
@@ -272,17 +281,17 @@ function App() {
           earliestPartTimeName: earliestInfo?.partTimeName || "",
           earliestSource: earliestInfo?.source || "未识别"
         };
-        if (!ownerEmails.has(email)) {
-          ownerEmails.set(email, current);
+        if (!ownerEmails.has(emailKey)) {
+          ownerEmails.set(emailKey, current);
         } else {
-          const best = ownerEmails.get(email)!;
+          const best = ownerEmails.get(emailKey)!;
           const bestDStr = formatLocalDate(best.date);
           const currDStr = formatLocalDate(effectiveDate);
           if (effectiveDate < best.date && currDStr !== bestDStr) {
-            ownerEmails.set(email, current);
+            ownerEmails.set(emailKey, current);
           } else if (currDStr === bestDStr) {
             if (source.includes(PRIORITY_SOURCE) && !best.source.includes(PRIORITY_SOURCE)) {
-              ownerEmails.set(email, current);
+              ownerEmails.set(emailKey, current);
             }
           }
         }
@@ -301,6 +310,7 @@ function App() {
     data.forEach(row => {
       const email = String(row[emailCol] || "").trim();
       if (!email) return;
+      const emailKey = email.toLowerCase();
       
       const rawDate = row[dateCol];
       let rowDate = (rawDate instanceof Date) ? rawDate : (rawDate ? new Date(rawDate) : null);
@@ -314,18 +324,18 @@ function App() {
       
       const current: RecordInfo = { email, owner, date: effectiveDate, source, partTimeName: ptName, influencerName: infName };
 
-      if (!globalEmailMap.has(email)) {
-        globalEmailMap.set(email, current);
+      if (!globalEmailMap.has(emailKey)) {
+        globalEmailMap.set(emailKey, current);
       } else {
-        const best = globalEmailMap.get(email)!;
+        const best = globalEmailMap.get(emailKey)!;
         const bestDStr = formatLocalDate(best.date);
         const currDStr = formatLocalDate(effectiveDate);
         
         if (effectiveDate < best.date && currDStr !== bestDStr) {
-          globalEmailMap.set(email, current);
+          globalEmailMap.set(emailKey, current);
         } else if (currDStr === bestDStr) {
           if (source.includes(PRIORITY_SOURCE) && !best.source.includes(PRIORITY_SOURCE)) {
-            globalEmailMap.set(email, current);
+            globalEmailMap.set(emailKey, current);
           }
         }
       }
@@ -405,7 +415,8 @@ function App() {
       link.href = URL.createObjectURL(blob as any);
       link.download = `负责人分表打包_${new Date().getTime()}.zip`;
       link.click();
-    } catch (err) {
+    // Fix: Explicitly use 'any' for catch block to avoid 'unknown' type assignment issues in TS
+    } catch (err: any) {
       const errorMessage = err instanceof Error ? err.message : String(err);
       alert(`打包导出失败: ${errorMessage}`);
     } finally {
@@ -419,10 +430,10 @@ function App() {
         <div className="max-w-5xl mx-auto flex items-center justify-between">
           <div>
             <h1 className="text-2xl font-bold flex items-center">
-              <i className="fas fa-file-invoice mr-3"></i> Excel 高级统计工具 v6.9
+              <i className="fas fa-file-invoice mr-3"></i> Excel 高级统计工具 v7.0
             </h1>
             <p className="opacity-80 text-sm mt-1">
-              <span className="bg-white/20 px-2 py-0.5 rounded-md mr-2">全链路溯源优化</span>
+              <span className="bg-white/20 px-2 py-0.5 rounded-md mr-2">全大小写不敏感</span>
               支持社媒端优先逻辑、空字段显示优化、负责人分表精简导出
             </p>
           </div>
@@ -497,6 +508,7 @@ function App() {
                     <div className="p-3 bg-indigo-50 rounded-lg border border-indigo-100 text-[10px] text-indigo-700 leading-relaxed">
                       <p className="font-bold mb-1 italic">处理逻辑说明：</p>
                       • 去重规则：取统计期内<strong>日期最早</strong>的记录。<br/>
+                      • 邮箱校验：<strong>全大小写不敏感</strong>归并。<br/>
                       • 优先级：同日期时<strong>“{PRIORITY_SOURCE}”</strong>优先。<br/>
                       • 溯源信息：自动追溯全库中该邮箱的<strong>最早记录</strong>。
                     </div>
@@ -590,6 +602,7 @@ function App() {
                             <div className="mb-3 text-[10px] text-gray-500 space-y-1 italic">
                                 <p>• 包含红人姓名 & 全链路溯源</p>
                                 <p>• 已移除分表中的最早红人字段</p>
+                                <p>• 邮箱全大小写不敏感判重</p>
                             </div>
                             <button onClick={() => exportSingleOwner(owner, recs)} className="w-full bg-gray-50 group-hover:bg-indigo-600 group-hover:text-white text-gray-500 py-2 rounded-xl text-[11px] font-bold transition-all">
                               单独导出 Excel
@@ -645,8 +658,8 @@ function App() {
         <div className="fixed inset-0 bg-indigo-950/40 backdrop-blur-md flex items-center justify-center z-50">
           <div className="bg-white p-10 rounded-3xl shadow-2xl text-center">
             <div className="animate-spin rounded-full h-12 w-12 border-4 border-indigo-600 border-t-transparent mx-auto mb-4"></div>
-            <p className="font-bold text-gray-800">正在生成溯源报表与分析全链路数据...</p>
-            <p className="text-xs text-gray-400 mt-2">正在提取：最早负责人、最早来源、最早兼职名字</p>
+            <p className="font-bold text-gray-800">正在生成全链路溯源报表...</p>
+            <p className="text-xs text-gray-400 mt-2">正在执行：大小写不敏感去重与社媒优先归位</p>
           </div>
         </div>
       )}
